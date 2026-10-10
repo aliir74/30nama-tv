@@ -42,7 +42,7 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
   const stream = useQuery(streamQuery(id))
   const user = useQuery({ queryKey: ['user'], queryFn: api.user, staleTime: 60 * 60_000 })
 
-  const items = stream.data?.hls ?? []
+  const items = useMemo(() => stream.data?.hls ?? [], [stream.data])
   // No explicit file means "resume": use the stream's saved episode, else the first file.
   const target = fileId ?? stream.data?.continue_watching?.file_id
   const index = Math.max(0, target ? items.findIndex((i) => i.info.file_id === target) : 0)
@@ -91,6 +91,13 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
       // Show the new position now rather than after the next timeupdate.
       setTime(seekRef.current)
     }
+    seekRef.current = null
+    setSeekTo(null)
+  }, [])
+
+  // Drops a pending seek, so a jump made by Previous or Back is not undone when its timer fires.
+  const cancelSeek = useCallback(() => {
+    clearTimeout(seekTimer.current)
     seekRef.current = null
     setSeekTo(null)
   }, [])
@@ -219,6 +226,7 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
 
   // Previous-track restarts the episode first, like most players; a second press goes back one.
   const playPrev = useCallback(() => {
+    cancelSeek()
     const v = videoRef.current
     if (v && (v.currentTime > 10 || !prev)) {
       v.currentTime = 0
@@ -227,11 +235,12 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
     if (!prev) return
     report()
     replace({ name: 'player', id, fileId: prev.info.file_id })
-  }, [prev, id, replace, report])
+  }, [prev, id, replace, report, cancelSeek])
 
+  // Paused means the viewer is still deciding, even if the count reached zero.
   useEffect(() => {
-    if (countdown === 0) playNext()
-  }, [countdown, playNext])
+    if (countdown === 0 && !paused) playNext()
+  }, [countdown, paused, playNext])
 
   // Pressing Home (or switching source) hides the app: stop playback and save the position.
   useEffect(() => {
@@ -276,9 +285,7 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
         if (countdown !== null) setAutoCancelled(true)
         else if (seekRef.current !== null) {
           // Back during a pending seek cancels it instead of leaving.
-          clearTimeout(seekTimer.current)
-          seekRef.current = null
-          setSeekTo(null)
+          cancelSeek()
         } else if (controls && panel !== 'main') setPanel('main')
         else if (controls && !videoRef.current?.paused) setControls(false)
         else back()
@@ -309,7 +316,7 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, controls, panel, inIntro, countdown, togglePlay, nudge, commitSeek, showControls, skipIntro, playNext, playPrev, back])
+  }, [active, controls, panel, inIntro, countdown, togglePlay, nudge, commitSeek, cancelSeek, showControls, skipIntro, playNext, playPrev, back])
 
   const cue = useMemo(() => cueAt(cues, time), [cues, time])
   const title = stream.data ? nameOf(stream.data.info) : ''
@@ -338,6 +345,8 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
             report()
           }}
           onWaiting={() => setBuffering(true)}
+          // A seek inside the credits restarts the countdown instead of using it up.
+          onSeeked={(e) => autoFrom !== null && setAutoFrom(e.currentTarget.currentTime)}
           onPlaying={() => setBuffering(false)}
           // A cancelled countdown means "stop here": the end returns to the title page.
           onEnded={() => (next && !autoCancelled ? playNext() : back())}
@@ -381,7 +390,7 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
                 duration={duration}
                 pct={pct}
                 paused={paused}
-                onPress={() => (seekRef.current !== null ? commitSeek() : togglePlay())}
+                onPress={() => (seekRef.current !== null ? commitSeek() : countdown !== null ? playNext() : togglePlay())}
               />
               {panel === 'main' && (
                 <div className="osd-actions options">
