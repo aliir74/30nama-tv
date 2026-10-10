@@ -27,3 +27,4 @@ dist
 *.wgt
 .buildResult
 .tizen
+release

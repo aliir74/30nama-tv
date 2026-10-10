@@ -6,7 +6,7 @@ const WAIT_MAX_MS = 4000
 
 // Every screen is a focus boundary, so arrows never wander into screens hidden below it.
 export function Screen({ id, active, children, initialFocus }: { id: string; active: boolean; children: ReactNode; initialFocus?: string }) {
-  const { ref, focusKey, focusSelf } = useFocusable({ focusKey: id, isFocusBoundary: true, saveLastFocusedChild: true, trackChildren: true })
+  const { ref, focusKey, focusSelf } = useFocusable({ focusKey: id, isFocusBoundary: true, saveLastFocusedChild: true })
   // After the first visit, coming back (Back key) restores the last focused child instead.
   const visited = useRef(false)
 

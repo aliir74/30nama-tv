@@ -105,3 +105,6 @@ Scope: full parity with the official Android TV app, no payments.
       CDP screenshots cannot see the video plane (white frame).
 - [x] Before/after screenshots + screen recording
 - [x] Public GitHub repo
+- [x] Release v0.1.0: `scripts/release.sh` builds without the key plus an empty `config.json`
+      (read with XHR: fetch refuses file://). Verified on the TV: key from config.json, home loads.
+      `tizen install` fails on the Persian .wgt file name; rename it to ASCII first.

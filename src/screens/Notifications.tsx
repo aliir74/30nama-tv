@@ -14,7 +14,7 @@ export function Notifications({ active }: { active: boolean }) {
   const { push } = useStack()
   const qc = useQueryClient()
   const list = useQuery({ queryKey: ['notifications', 1], queryFn: () => api.notifications(1), staleTime: 0, enabled: active })
-  const { ref, focusKey } = useFocusable({ focusKey: 'notif-list', trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey } = useFocusable({ focusKey: 'notif-list', saveLastFocusedChild: true })
   const items = list.data?.notifications ?? []
 
   const open = (n: Notification) => {

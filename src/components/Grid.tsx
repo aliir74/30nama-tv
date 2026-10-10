@@ -24,7 +24,7 @@ export function Grid({ queryKey, fetchPage, onOpen, columns = 6, focusKey, empty
     staleTime: 5 * 60_000,
     enabled,
   })
-  const { ref, focusKey: key } = useFocusable({ focusKey, trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey: key } = useFocusable({ focusKey, saveLastFocusedChild: true })
   const items = query.data?.pages.flatMap((p) => p.posts) ?? []
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
   const loaded = items.length > 0
