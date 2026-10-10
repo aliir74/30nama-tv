@@ -41,7 +41,7 @@ export function Browse({ active }: { active: boolean }) {
 }
 
 function Tiles({ title, items, onOpen, wide }: { title: string; items: MenuItem[]; onOpen: (m: MenuItem) => void; wide?: boolean }) {
-  const { ref, focusKey } = useFocusable({ trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey } = useFocusable({ saveLastFocusedChild: true })
   return (
     <FocusContext.Provider value={focusKey}>
       <section ref={ref} className="tiles-section">

@@ -133,7 +133,7 @@ function Episodes({ seasons, season, onSeason, currentFile, onPlay }: {
   currentFile?: number
   onPlay: (fileId: number) => void
 }) {
-  const { ref, focusKey } = useFocusable({ trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey } = useFocusable({ saveLastFocusedChild: true })
   return (
     <FocusContext.Provider value={focusKey}>
       <section ref={ref} className="episodes">

@@ -95,7 +95,7 @@ export function Profile({ active }: { active: boolean }) {
 }
 
 function SettingRow<K extends keyof Settings>({ name, title, value, options }: { name: K; title: string; value: Settings[K]; options: Option<K>[] }) {
-  const { ref, focusKey } = useFocusable({ focusKey: `settings-${name}`, trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey } = useFocusable({ focusKey: `settings-${name}`, saveLastFocusedChild: true })
   return (
     <FocusContext.Provider value={focusKey}>
       <section ref={ref} className="setting">

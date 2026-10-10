@@ -1,4 +1,4 @@
-import { setFocus } from '@noriginmedia/norigin-spatial-navigation'
+import { getCurrentFocusKey, setFocus, useFocusable } from '@noriginmedia/norigin-spatial-navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { OBSERVER_EVERY_S } from '../api/config'
@@ -8,16 +8,24 @@ import { Button } from '../components/Button'
 import { Screen } from '../components/Screen'
 import { log } from '../lib/log'
 import { settings, useSettings } from '../lib/settings'
-import { is } from '../lib/tv'
+import { is, setScreenSaver } from '../lib/tv'
 import { useStack } from '../nav/stack'
 import { streamQuery } from '../screens/TitleScreen'
 import { attach, type Engine, type Level } from './engine'
 import { cueAt, loadCues, type Cue } from './subtitles'
 
 type SubLang = 'fa' | 'en' | 'off'
-type Panel = 'main' | 'quality' | 'subs'
+type Panel = 'main' | 'quality' | 'subs' | 'episodes'
 
 const HIDE_AFTER_MS = 5000
+// Seek presses accumulate into one jump, applied once the viewer stops pressing.
+const SEEK_COMMIT_MS = 700
+const SEEK_BURST_MS = 450
+const PEEK_MS = 2500
+// Countdown before the next episode starts on its own.
+const AUTO_NEXT_S = 10
+// Without an "end" (credits) marker, the countdown starts this close to the end.
+const TAIL_S = 25
 
 const clock = (s: number) => {
   if (!Number.isFinite(s)) return '--:--'
@@ -34,12 +42,16 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
   const stream = useQuery(streamQuery(id))
   const user = useQuery({ queryKey: ['user'], queryFn: api.user, staleTime: 60 * 60_000 })
 
-  const items = stream.data?.hls ?? []
+  const items = useMemo(() => stream.data?.hls ?? [], [stream.data])
   // No explicit file means "resume": use the stream's saved episode, else the first file.
   const target = fileId ?? stream.data?.continue_watching?.file_id
   const index = Math.max(0, target ? items.findIndex((i) => i.info.file_id === target) : 0)
   const item: StreamItem | undefined = items[index]
   const next = items[index + 1]
+  const prev = index > 0 ? items[index - 1] : undefined
+  const season = item?.info.season ?? 1
+  // Memoised: the focus effect depends on it, and playback re-renders several times a second.
+  const seasonItems = useMemo(() => items.filter((i) => (i.info.season ?? 1) === season), [items, season])
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const engineRef = useRef<Engine | null>(null)
@@ -61,7 +73,62 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
   const introEnd = hms(item?.options.intro_end)
   const creditsAt = hms(item?.options.end)
   const inIntro = introEnd !== null && time >= (introStart ?? 0) && time < introEnd - 1
-  const inCredits = !!next && creditsAt !== null && time >= creditsAt
+  const nearEnd = !!next && Number.isFinite(duration) && (creditsAt !== null ? time >= creditsAt : duration - time <= TAIL_S)
+
+  // ---- seeking: presses accumulate, a bar previews the target, the jump lands on release ----
+  const seekRef = useRef<number | null>(null)
+  const [seekTo, setSeekTo] = useState<number | null>(null)
+  const [peek, setPeek] = useState(false)
+  const seekTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const peekTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const burst = useRef({ n: 0, at: 0, dir: 0 })
+
+  const commitSeek = useCallback(() => {
+    clearTimeout(seekTimer.current)
+    const v = videoRef.current
+    if (v && seekRef.current !== null) {
+      v.currentTime = seekRef.current
+      // Show the new position now rather than after the next timeupdate.
+      setTime(seekRef.current)
+    }
+    seekRef.current = null
+    setSeekTo(null)
+  }, [])
+
+  // Drops a pending seek, so a jump made by Previous or Back is not undone when its timer fires.
+  const cancelSeek = useCallback(() => {
+    clearTimeout(seekTimer.current)
+    seekRef.current = null
+    setSeekTo(null)
+  }, [])
+
+  const nudge = useCallback(
+    (dir: 1 | -1, base = 10) => {
+      const v = videoRef.current
+      if (!v || !Number.isFinite(v.duration)) return
+      const now = Date.now()
+      const b = burst.current
+      // Holding the key (or pressing fast) speeds up: base steps, then 3x, then 6x.
+      b.n = now - b.at < SEEK_BURST_MS && b.dir === dir ? b.n + 1 : 0
+      b.at = now
+      b.dir = dir
+      const step = base * (b.n < 4 ? 1 : b.n < 10 ? 3 : 6)
+      const target = Math.max(0, Math.min(v.duration - 1, (seekRef.current ?? v.currentTime) + dir * step))
+      seekRef.current = target
+      setSeekTo(target)
+      clearTimeout(seekTimer.current)
+      seekTimer.current = setTimeout(commitSeek, SEEK_COMMIT_MS)
+      setPeek(true)
+      clearTimeout(peekTimer.current)
+      peekTimer.current = setTimeout(() => setPeek(false), PEEK_MS)
+    },
+    [commitSeek],
+  )
+
+  // ---- next-episode countdown, measured in playback time so pausing pauses it -------------
+  const [autoFrom, setAutoFrom] = useState<number | null>(null)
+  const [autoCancelled, setAutoCancelled] = useState(false)
+  const countdown = nearEnd && !autoCancelled && autoFrom !== null ? Math.max(0, Math.ceil(AUTO_NEXT_S - (time - autoFrom))) : null
 
   // ---- media setup -------------------------------------------------------------------------
   useEffect(() => {
@@ -128,6 +195,8 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
     if (!video) return
     setTime(video.currentTime)
     if (Math.abs(video.currentTime - lastReport.current) >= OBSERVER_EVERY_S) report()
+    if (nearEnd && autoFrom === null) setAutoFrom(video.currentTime)
+    if (!nearEnd && autoFrom !== null) setAutoFrom(null)
   }
 
   // ---- controls ----------------------------------------------------------------------------
@@ -149,25 +218,52 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
     else v.pause()
   }, [])
 
-  const seekBy = useCallback((delta: number) => {
-    const v = videoRef.current
-    if (!v || !Number.isFinite(v.duration)) return
-    v.currentTime = Math.max(0, Math.min(v.duration - 1, v.currentTime + delta))
-  }, [])
-
   const playNext = useCallback(() => {
     if (!next) return
     report()
     replace({ name: 'player', id, fileId: next.info.file_id })
   }, [next, id, replace, report])
 
+  // Previous-track restarts the episode first, like most players; a second press goes back one.
+  const playPrev = useCallback(() => {
+    cancelSeek()
+    const v = videoRef.current
+    if (v && (v.currentTime > 10 || !prev)) {
+      v.currentTime = 0
+      return
+    }
+    if (!prev) return
+    report()
+    replace({ name: 'player', id, fileId: prev.info.file_id })
+  }, [prev, id, replace, report, cancelSeek])
+
+  // Paused means the viewer is still deciding, even if the count reached zero.
+  useEffect(() => {
+    if (countdown === 0 && !paused) playNext()
+  }, [countdown, paused, playNext])
+
+  // Pressing Home (or switching source) hides the app: stop playback and save the position.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) videoRef.current?.pause()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      setScreenSaver(true)
+    }
+  }, [])
+
   const skipIntro = useCallback(() => {
     if (introEnd !== null && videoRef.current) videoRef.current.currentTime = introEnd
   }, [introEnd])
 
   useEffect(() => {
-    if (controls && active) setTimeout(() => setFocus(panel === 'main' ? 'pl-play' : `pl-${panel}-0`), 0)
-  }, [controls, panel, active])
+    // Like Netflix: the controls open on the seek bar, where OK pauses and Left/Right seek.
+    const episodeAt = Math.max(0, seasonItems.findIndex((i) => i.info.file_id === item?.info.file_id))
+    const key = panel === 'main' ? 'pl-seek' : panel === 'episodes' ? `pl-episodes-${episodeAt}` : `pl-${panel}-0`
+    if (controls && active) setTimeout(() => setFocus(key), 0)
+  }, [controls, panel, active, seasonItems, item])
 
   // Captures keys before spatial navigation and the stack, so the hidden-controls
   // state can map arrows to seeking and Back to "hide controls" first.
@@ -179,38 +275,53 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
         e.stopImmediatePropagation()
       }
       if (is(e, 'PlayPause') || is(e, 'Play') || is(e, 'Pause')) return stop(), togglePlay(), showControls()
-      if (is(e, 'FastForward')) return stop(), seekBy(30), showControls()
-      if (is(e, 'Rewind')) return stop(), seekBy(-30), showControls()
+      if (is(e, 'FastForward')) return stop(), nudge(1, 30)
+      if (is(e, 'Rewind')) return stop(), nudge(-1, 30)
+      if (is(e, 'NextTrack')) return stop(), playNext()
+      if (is(e, 'PrevTrack')) return stop(), playPrev()
       if (is(e, 'Stop')) return stop(), back()
       if (is(e, 'Back')) {
         stop()
-        if (controls && panel !== 'main') setPanel('main')
+        if (countdown !== null) setAutoCancelled(true)
+        else if (seekRef.current !== null) {
+          // Back during a pending seek cancels it instead of leaving.
+          cancelSeek()
+        } else if (controls && panel !== 'main') setPanel('main')
         else if (controls && !videoRef.current?.paused) setControls(false)
         else back()
         return
       }
       if (controls) {
         showControls()
+        // On the focused seek bar, Left/Right scrub instead of moving focus. The timeline is
+        // drawn left-to-right, so Right moves forward even in the RTL UI.
+        if (getCurrentFocusKey() === 'pl-seek' && (e.keyCode === 37 || e.keyCode === 39)) {
+          stop()
+          nudge(e.keyCode === 39 ? 1 : -1)
+        }
         return
       }
       stop()
       if (is(e, 'Enter')) {
-        if (inIntro) skipIntro()
-        else if (inCredits) playNext()
-        else togglePlay()
-        showControls()
-        // The timeline is drawn left-to-right, so Right moves forward even in the RTL UI.
-      } else if (e.keyCode === 39) seekBy(10)
-      else if (e.keyCode === 37) seekBy(-10)
+        if (seekRef.current !== null) commitSeek()
+        else if (countdown !== null) playNext()
+        else if (inIntro) skipIntro()
+        else {
+          togglePlay()
+          showControls()
+        }
+      } else if (e.keyCode === 39) nudge(1)
+      else if (e.keyCode === 37) nudge(-1)
       else showControls()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, controls, panel, inIntro, inCredits, togglePlay, seekBy, showControls, skipIntro, playNext, back])
+  }, [active, controls, panel, inIntro, countdown, togglePlay, nudge, commitSeek, cancelSeek, showControls, skipIntro, playNext, playPrev, back])
 
   const cue = useMemo(() => cueAt(cues, time), [cues, time])
   const title = stream.data ? nameOf(stream.data.info) : ''
-  const pct = Number.isFinite(duration) && duration > 0 ? (time / duration) * 100 : 0
+  const shown = seekTo ?? time
+  const pct = Number.isFinite(duration) && duration > 0 ? (shown / duration) * 100 : 0
 
   if (stream.isError) return <p className="error center">{(stream.error as Error).message}</p>
 
@@ -224,16 +335,21 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
           onDurationChange={(e) => setDuration(e.currentTarget.duration)}
           onPlay={() => {
             setPaused(false)
+            setScreenSaver(false)
             showControls()
           }}
           onPause={() => {
             setPaused(true)
+            setScreenSaver(true)
             setControls(true)
             report()
           }}
           onWaiting={() => setBuffering(true)}
+          // A seek inside the credits restarts the countdown instead of using it up.
+          onSeeked={(e) => autoFrom !== null && setAutoFrom(e.currentTarget.currentTime)}
           onPlaying={() => setBuffering(false)}
-          onEnded={() => (next ? playNext() : back())}
+          // A cancelled countdown means "stop here": the end returns to the title page.
+          onEnded={() => (next && !autoCancelled ? playNext() : back())}
         />
         {cue && (
           <div className={`subtitle size-${prefs.subSize} ${controls ? 'raised' : ''}`} dir="auto">
@@ -245,9 +361,23 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
         {buffering && !error && <div className="spinner center" />}
         {error && <p className="error center">خطای پخش: {error}</p>}
 
-        {!controls && inIntro && <div className="prompt">OK: رد کردن تیتراژ</div>}
-        {!controls && inCredits && <div className="prompt">OK: قسمت بعد</div>}
+        {!controls && inIntro && countdown === null && <div className="prompt">OK: رد کردن تیتراژ</div>}
+        {countdown !== null && (
+          <div className="prompt">
+            قسمت بعد تا {countdown} ثانیه دیگر · OK: پخش · بازگشت: لغو
+          </div>
+        )}
+        {!controls && (peek || seekTo !== null) && (
+          <div className="peek">
+            <Timeline time={shown} duration={duration} pct={pct} />
+          </div>
+        )}
 
+        {controls && paused && !buffering && (
+          <div className="center-state" aria-hidden>
+            <svg viewBox="0 0 24 24" width="96" height="96" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+          </div>
+        )}
         {controls && (
           <div className="osd">
             <div className="osd-top">
@@ -255,28 +385,62 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
               {item?.info.episode_name && <h2>{item.info.episode_name}</h2>}
             </div>
             <div className="osd-bottom">
-              <div className="timeline" dir="ltr">
-                <span>{clock(time)}</span>
-                <div className="bar">
-                  <div style={{ width: `${pct}%` }} />
-                </div>
-                <span>{clock(duration)}</span>
-              </div>
+              <SeekBar
+                time={shown}
+                duration={duration}
+                pct={pct}
+                paused={paused}
+                onPress={() => (seekRef.current !== null ? commitSeek() : countdown !== null ? playNext() : togglePlay())}
+              />
               {panel === 'main' && (
-                <div className="osd-actions">
-                  <Button focusKey="pl-play" variant="primary" onPress={togglePlay}>
-                    {paused ? '▶ پخش' : '❚❚ توقف'}
+                <div className="osd-actions options">
+                  {inIntro && (
+                    <Button onPress={skipIntro}>
+                      <Icon d="M5 4l10 8-10 8zM19 5v14" />
+                      رد کردن تیتراژ
+                    </Button>
+                  )}
+                  {next && (
+                    <Button onPress={playNext}>
+                      <Icon d="M5 4l10 8-10 8zM19 5v14" />
+                      قسمت بعد
+                    </Button>
+                  )}
+                  {seasonItems.length > 1 && (
+                    <Button onPress={() => setPanel('episodes')}>
+                      <Icon d="M4 6h16M4 12h16M4 18h10" />
+                      قسمت‌ها
+                    </Button>
+                  )}
+                  <Button onPress={() => setPanel('subs')}>
+                    <Icon d="M3 5h18v14H3zM7 11h3M7 15h6M14 11h3M16 15h1" />
+                    زیرنویس: {subLang === 'fa' ? 'فارسی' : subLang === 'en' ? 'انگلیسی' : 'خاموش'}
                   </Button>
-                  <Button onPress={() => seekBy(-10)}>۱۰ ثانیه عقب</Button>
-                  <Button onPress={() => seekBy(10)}>۱۰ ثانیه جلو</Button>
-                  {inIntro && <Button onPress={skipIntro}>رد کردن تیتراژ</Button>}
-                  {next && <Button onPress={playNext}>قسمت بعد</Button>}
-                  <Button onPress={() => setPanel('subs')}>زیرنویس: {subLang === 'fa' ? 'فارسی' : subLang === 'en' ? 'انگلیسی' : 'خاموش'}</Button>
                   {levels.length > 0 && (
                     <Button onPress={() => setPanel('quality')}>
+                      <Icon d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6" />
                       کیفیت: {level === -1 ? 'خودکار' : `${levels[level]?.height}p`}
                     </Button>
                   )}
+                </div>
+              )}
+              {panel === 'episodes' && (
+                <div className="osd-actions options">
+                  {seasonItems.map((e, i) => (
+                    <Button
+                      key={e.info.file_id}
+                      focusKey={`pl-episodes-${i}`}
+                      className={e.info.file_id === item?.info.file_id ? 'selected' : ''}
+                      onPress={() => {
+                        setPanel('main')
+                        if (e.info.file_id === item?.info.file_id) return
+                        report()
+                        replace({ name: 'player', id, fileId: e.info.file_id })
+                      }}
+                    >
+                      قسمت {e.info.episode_number ?? e.info.episode}
+                    </Button>
+                  ))}
                 </div>
               )}
               {panel === 'subs' && (
@@ -319,5 +483,42 @@ export function Player({ id, fileId, active }: { id: number; fileId?: number; ac
         )}
       </div>
     </Screen>
+  )
+}
+
+function Icon({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d={d} />
+    </svg>
+  )
+}
+
+function Timeline({ time, duration, pct, focused, paused }: { time: number; duration: number; pct: number; focused?: boolean; paused?: boolean }) {
+  return (
+    <div className={`timeline ${focused ? 'focused' : ''}`} dir="ltr">
+      {paused !== undefined && (
+        <svg className="state" viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden>
+          <path d={paused ? 'M8 5v14l11-7z' : 'M7 5h4v14H7zM13 5h4v14h-4z'} />
+        </svg>
+      )}
+      <span>{clock(time)}</span>
+      <div className="bar">
+        <div style={{ width: `${pct}%` }} />
+        <i className="thumb" style={{ left: `${pct}%` }} />
+      </div>
+      <span>-{clock(Math.max(0, duration - time))}</span>
+    </div>
+  )
+}
+
+// Focusable timeline in the controls, Netflix style: OK plays or pauses (or lands a pending
+// seek), and the player's key handler scrubs it with Left/Right.
+function SeekBar({ onPress, ...props }: { time: number; duration: number; pct: number; paused: boolean; onPress: () => void }) {
+  const { ref, focused } = useFocusable({ focusKey: 'pl-seek', onEnterPress: onPress })
+  return (
+    <div ref={ref}>
+      <Timeline {...props} focused={focused} />
+    </div>
   )
 }

@@ -88,7 +88,7 @@ export function Filters({ active }: { active: boolean }) {
 }
 
 function ChoiceRow({ title, choices, isOn, onPick }: { title: string; choices: Choice[]; isOn: (v: string | number) => boolean; onPick: (v: string | number) => void }) {
-  const { ref, focusKey } = useFocusable({ trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey } = useFocusable({ saveLastFocusedChild: true })
   return (
     <FocusContext.Provider value={focusKey}>
       <section ref={ref} className="choice-row">

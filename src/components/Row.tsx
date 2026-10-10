@@ -1,9 +1,9 @@
 import { FocusContext, useFocusable } from '@noriginmedia/norigin-spatial-navigation'
-import { useCallback, useRef } from 'react'
+import { memo, useCallback, useRef } from 'react'
 import { isLatin, nameOf, posterOf, type Title } from '../api/types'
 
 export function Row({ title, items, onOpen, focusKey }: { title: string; items: Title[]; onOpen: (t: Title) => void; focusKey?: string }) {
-  const { ref, focusKey: key } = useFocusable({ focusKey, trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey: key } = useFocusable({ focusKey, saveLastFocusedChild: true })
   const rowRef = useRef<HTMLElement | null>(null)
 
   const onCardFocus = useCallback((el: HTMLElement) => {
@@ -33,7 +33,8 @@ export function Row({ title, items, onOpen, focusKey }: { title: string; items: 
   )
 }
 
-export function Card({ title, onOpen, onFocusEl }: { title: Title; onOpen: (t: Title) => void; onFocusEl: (el: HTMLElement) => void }) {
+// Memoised: a row re-renders when focus enters or leaves it, and its cards need not follow.
+export const Card = memo(function Card({ title, onOpen, onFocusEl }: { title: Title; onOpen: (t: Title) => void; onFocusEl: (el: HTMLElement) => void }) {
   const { ref, focused } = useFocusable({
     onEnterPress: () => onOpen(title),
     onFocus: () => ref.current && onFocusEl(ref.current),
@@ -46,6 +47,7 @@ export function Card({ title, onOpen, onFocusEl }: { title: Title; onOpen: (t: T
         src={posterOf(title, 'medium')}
         alt=""
         loading="lazy"
+        decoding="async"
         // A missing poster shows the empty card instead of the broken-image icon.
         onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
       />
@@ -61,4 +63,4 @@ export function Card({ title, onOpen, onFocusEl }: { title: Title; onOpen: (t: T
       </div>
     </div>
   )
-}
+})

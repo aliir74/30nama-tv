@@ -27,7 +27,7 @@ const LAYOUTS: Record<Layout, string[][]> = {
 // so search never opens it.
 export function Keyboard({ value, onChange, focusKey }: { value: string; onChange: (v: string) => void; focusKey: string }) {
   const [layout, setLayout] = useState<Layout>('fa')
-  const { ref, focusKey: key } = useFocusable({ focusKey, trackChildren: true, saveLastFocusedChild: true })
+  const { ref, focusKey: key } = useFocusable({ focusKey, saveLastFocusedChild: true })
   const type = (c: string) => onChange(value + c)
 
   return (

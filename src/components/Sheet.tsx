@@ -8,7 +8,7 @@ export type SheetAction = { label: string; onPress: () => void; variant?: 'prima
 
 // A modal list of actions. It traps focus, and Back closes it instead of leaving the screen.
 export function Sheet({ id, title, actions, onClose }: { id: string; title: string; actions: SheetAction[]; onClose: () => void }) {
-  const { ref, focusKey } = useFocusable({ focusKey: id, isFocusBoundary: true, trackChildren: true })
+  const { ref, focusKey } = useFocusable({ focusKey: id, isFocusBoundary: true })
   // Callers pass inline closures; a ref keeps the effect from re-running (and re-focusing) on render.
   const close = useRef(onClose)
   useLayoutEffect(() => {

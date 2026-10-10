@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useRef } from 'react'
 import { api } from '../api/endpoints'
 import { coverOf, isLatin, nameOf, type Title } from '../api/types'
 import { Button } from '../components/Button'
@@ -16,13 +17,18 @@ export function Home({ active }: { active: boolean }) {
   // The player resolves the episode and position from the stream's resume point.
   const resume = (t: Title) => push({ name: 'player', id: t.id })
   const shown = home.data?.hero_header?.posts[0] ?? null
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // The hero is taller than the screen's "nearest" scroll, so going back up shows all of it.
+  const toTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
 
   if (home.isError) return <p className="error center">{(home.error as Error).message}</p>
 
   return (
     <Screen id="home" active={active} initialFocus="hero-play">
-      <div className="home has-rail">
+      {/* The rail sits outside the scroller so it stays put while home scrolls. */}
+      <div className="page has-rail">
         <SideMenu current="home" />
+        <div className="home" ref={scrollRef}>
         {shown && (
           <header className="hero" style={{ backgroundImage: `url(${coverOf(shown)})` }}>
             <div className="hero-shade" />
@@ -35,10 +41,12 @@ export function Home({ active }: { active: boolean }) {
               </div>
               <p className="hero-plot">{shown.plot?.local || shown.plot?.english}</p>
               <div className="actions">
-                <Button focusKey="hero-play" variant="primary" onPress={() => (shown.options.is_series ? open(shown) : push({ name: 'player', id: shown.id }))}>
+                <Button focusKey="hero-play" variant="primary" onFocus={toTop} onPress={() => (shown.options.is_series ? open(shown) : push({ name: 'player', id: shown.id }))}>
                   ▶ پخش
                 </Button>
-                <Button onPress={() => open(shown)}>جزئیات</Button>
+                <Button onFocus={toTop} onPress={() => open(shown)}>
+                  جزئیات
+                </Button>
               </div>
             </div>
           </header>
@@ -54,6 +62,7 @@ export function Home({ active }: { active: boolean }) {
           </>
         )}
         {home.isLoading && <div className="spinner center" />}
+        </div>
       </div>
     </Screen>
   )

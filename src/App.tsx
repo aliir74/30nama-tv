@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { ApiError, session } from './api/client'
 import { api } from './api/endpoints'
 import { log, logStore } from './lib/log'
-import { is, registerTvKeys } from './lib/tv'
+import { blockNativeArrowScroll, is, registerTvKeys } from './lib/tv'
 import { StackProvider, type Route } from './nav/stack'
 import { Player } from './player/Player'
 import { Browse } from './screens/Browse'
@@ -54,6 +54,7 @@ function renderRoute(r: Route, active: boolean) {
   }
 }
 registerTvKeys()
+blockNativeArrowScroll()
 
 const queryClient = new QueryClient({
   defaultOptions: {
