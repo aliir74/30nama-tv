@@ -1,5 +1,8 @@
 # 30nama TV
 
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
+
 An unofficial [30nama](https://30nama.com) app for Samsung TVs (Tizen). Browse, search and stream
 with Persian subtitles, all from the TV remote.
 
@@ -185,3 +188,11 @@ the last line of its output names the port, and `http://<tv-ip>:<port>` opens Ch
 
 Not affiliated with 30nama. It uses your own account and plan, and shows only what the official
 apps show you.
+
+## Support This Project
+
+If you find this project useful, consider supporting its development:
+
+- Star this repo
+- Report bugs and submit PRs
+- [Sponsor on GitHub](https://github.com/sponsors/aliir74) or [Buy me a coffee](https://www.buymeacoffee.com/aliir74)
